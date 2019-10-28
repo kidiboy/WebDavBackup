@@ -15,15 +15,15 @@ import (
 
 type Conf struct {
 	Duration int
-	TasksWD [] ConfTask `yaml:"Tasks"`
+	TasksWD  []ConfTask `yaml:"Tasks"`
 }
 
-type ConfTask struct{
-	Host string `yaml:"Host"`
-	User string
+type ConfTask struct {
+	Host     string `yaml:"Host"`
+	User     string
 	Password string
-	ArcDir string `yaml:"arc_dir"`
-	LocDir string `yaml:"loc_dir"`
+	ArcDir   string `yaml:"arc_dir"`
+	LocDir   string `yaml:"loc_dir"`
 	FileName string `yaml:"file_name"`
 }
 
@@ -53,7 +53,7 @@ func ReadConfig(path string) (*Conf, error) {
 
 func main() {
 	conf, err := ReadConfig("config.yml")
-	durSleep := time.Duration(conf.Duration)
+	durSleep := time.Duration(conf.Duration) * time.Minute
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -67,7 +67,7 @@ func main() {
 				log.Fatal(err)
 			}
 		}
-		time.Sleep(durSleep * time.Minute)
+		time.Sleep(durSleep)
 	}
 
 }
