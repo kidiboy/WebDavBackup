@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,49 @@ func ReadConfig(path string) (*Conf, error) {
 	return nil, fmt.Errorf("file %s is empty", path)
 }
 
+func ParseArcDate(arcName string, confName string) (time.Time, error) {
+	layout := "02-01-2006_15.04.05"
+	layoutFull := "02-01-2006_15.04.05-0700"
+	extConfName := filepath.Ext(confName)
+	prefixConfName := confName[:len(confName)-len(extConfName)] + "_"
+	//log.Printf("extConfName: %s; prefixConfName: %s", extConfName, prefixConfName)
+	needLen := len(layout) + len(extConfName) + len(prefixConfName)
+	needLenFull := len(layoutFull) + len(extConfName) + len(prefixConfName)
+	//log.Printf("extConfName: %s; prefixConfName: %s; needLen: %d; needLenFull: %d; lenArcName: %d", extConfName,
+	//	prefixConfName,	needLen, needLenFull, len(arcName))
+	if (len(arcName) != needLen) && (len(arcName) != needLenFull) {
+		return time.Time{}, fmt.Errorf("the length of the file name \"%s\" differs from the required length",
+			arcName)
+	}
+	hasPref := strings.HasPrefix(arcName, prefixConfName)
+	if hasPref != true {
+		return time.Time{}, fmt.Errorf("NOT has prefix \"%s\" in name file \"%s\" from arhive directory",
+			prefixConfName, arcName)
+	}
+	arcNameWithoutPref := strings.TrimPrefix(arcName, prefixConfName)
+	hasSuf := strings.HasSuffix(arcName, extConfName)
+	if hasSuf != true {
+		return time.Time{}, fmt.Errorf("NOT has extention \"%s\" in name file \"%s\" from arhive directory",
+			extConfName, arcName)
+	}
+	strArcDate := strings.TrimSuffix(arcNameWithoutPref, extConfName)
+	//log.Printf("Total date from file name arc file: %s", strArcDate)
+	if len(strArcDate) == len(layoutFull) {
+		parseDate, err := time.Parse(layoutFull, strArcDate)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return parseDate, nil
+	} else {
+		parseDate, err := time.ParseInLocation(layout, strArcDate, time.Local)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return parseDate, nil
+	}
+	//return time.Time{}, nil
+}
+
 func main() {
 	conf, err := ReadConfig("config.yml")
 	durSleep := time.Duration(conf.Duration) * time.Minute
@@ -64,12 +108,50 @@ func main() {
 		for _, currTask := range conf.TasksWD {
 			err := doBackup(currTask)
 			if err != nil {
-				log.Fatal(err)
+				log.Printf("err main\t%s", err)
 			}
 		}
 		time.Sleep(durSleep)
 	}
 
+}
+
+func GetArcLastDate(currTask ConfTask, wdServer *wd.Client) (time.Time, error) {
+	arcDir := currTask.ArcDir
+	//Get all in archive directory on WebDav
+	filesArch, err := wdServer.ReadDir(arcDir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	backupFileName := currTask.FileName
+	curExt := filepath.Ext(backupFileName)
+	var arcLastDate time.Time = time.Unix(0, 0) //nil
+	log.Printf("Serching files on archive directory with the extension: %s", curExt)
+	for _, file := range filesArch {
+		//Only files with the required extension
+		if (filepath.Ext(file.Name()) == curExt) && (file.IsDir() == false) {
+			//log.Println(file)
+			//fileModeTime := file.ModTime()
+			fileParseModeTime, err := ParseArcDate(file.Name(), backupFileName)
+			if err != nil {
+				log.Printf("err GetArcLastDate\t%s", err)
+				continue
+			}
+			//log.Printf("Testing parse date from file name on archive:  parse date: %s, filename: %s",
+			//	fileParseModeTime, file.Name())
+			//Used filemode time from atribute
+			//if fileModeTime.Unix() > arcLastDate.Unix() {
+			//	arcLastDate = fileModeTime
+			//}
+			//log.Println(file.Name())
+
+			//Used get filemode from file name
+			if fileParseModeTime.Unix() > arcLastDate.Unix() {
+				arcLastDate = fileParseModeTime
+			}
+		}
+	}
+	return arcLastDate, nil
 }
 
 func doBackup(currTask ConfTask) error {
@@ -84,6 +166,44 @@ func doBackup(currTask ConfTask) error {
 		modTimeFileBackup.Unix(), modTimeFileBackup, modTimeFileBackup.Location())
 	log.Printf("Trying auth to WebDav server: %s, user: %s\n", currTask.Host, currTask.User)
 	wdServer := wd.NewClient(currTask.Host, currTask.User, currTask.Password)
+	arcDir := currTask.ArcDir
+
+	//Find Arc dir on WebDav, create it if not found
+	err = CreateRemoteArcDirIfNotExists(currTask, wdServer)
+	if err != nil {
+		return err
+	}
+
+	//Searching last file and max date on archive directory
+	arcLastDate, err := GetArcLastDate(currTask, wdServer)
+	if err != nil {
+		return err
+	}
+
+	//Coerce the last date of the backup file from WebDav archive to a local TimeZone
+	arcLastDate = arcLastDate.In(modTimeFileBackup.Location())
+	log.Printf("inf doBackup\tActual arcLastDate in local TimeZone: %s", arcLastDate)
+	//Making new filename to backup, if current file is newest
+	if modTimeFileBackup.Unix() > arcLastDate.Unix() {
+		curExt := filepath.Ext(currTask.FileName)
+		timeToName := modTimeFileBackup.Format("02-01-2006_15.04.05-0700")
+		nameWithoutExt := currTask.FileName[:len(currTask.FileName)-len(curExt)]
+		newFileName := nameWithoutExt + "_" + timeToName + curExt
+		log.Printf("Name without extention: %s", nameWithoutExt)
+		log.Printf("New Filename to backup file: %s", newFileName)
+		bytes, _ := ioutil.ReadFile(pathToBackup)
+		pathToNewBackupFile := path.Join(arcDir, newFileName)
+		log.Printf("Uploading backup file to WebDev path: %s", pathToNewBackupFile)
+		err := wdServer.Write(pathToNewBackupFile, bytes, 0644)
+		if err != nil {
+			return err
+		}
+		log.Printf("Copy successed")
+	}
+	return nil
+}
+
+func CreateRemoteArcDirIfNotExists(currTask ConfTask, wdServer *wd.Client) error {
 	arcDir := currTask.ArcDir
 	//Get all files and directories on WebDav root
 	filesRoot, err := wdServer.ReadDir("/")
@@ -102,59 +222,18 @@ func doBackup(currTask ConfTask) error {
 		} else if cnt == 0 {
 			log.Printf("Archive directory \"%s\" NOT found", arcDir)
 			//Join root WebDav path and archive directory
-			arcUrl, _ := url.Parse(currTask.Host)
+			arcUrl, err := url.Parse(currTask.Host)
+			if err != nil {
+				return err
+			}
 			arcUrl.Path = path.Join(arcUrl.Path, arcDir)
 			arcUrlStr := arcUrl.String()
 			log.Printf("Creating archive directory on path: %s", arcUrlStr)
-			err := wdServer.Mkdir(arcDir, 700)
+			err = wdServer.Mkdir(arcDir, 700)
 			if err != nil {
 				return err
 			}
 		}
-	}
-	curExt := filepath.Ext(currTask.FileName)
-	//Get all in archive directory on WebDav
-	filesArch, err := wdServer.ReadDir(arcDir)
-	if err != nil {
-		return err
-	}
-	//Searching last file and max date on archive directory
-	var arcLastDate time.Time = time.Unix(0, 0) //nil
-	log.Printf("Serching files on archive directory with the extension: %s", curExt)
-	for _, file := range filesArch {
-		//Only files with the required extension
-		if (filepath.Ext(file.Name()) == curExt) && (file.IsDir() == false) {
-			//log.Println(file)
-			fileModeTime := file.ModTime()
-			if fileModeTime.Unix() > arcLastDate.Unix() {
-				arcLastDate = fileModeTime
-			}
-			//log.Println(file.Name())
-		}
-	}
-	//Coerce the last date of the backup file from WebDav archive to a local TimeZone
-	loc, err := time.LoadLocation(modTimeFileBackup.Location().String())
-	if err != nil {
-		log.Println(err)
-	} else {
-		arcLastDate = arcLastDate.In(loc)
-	}
-	log.Printf("Actual arcLastDate: %s", arcLastDate)
-	//Making new filename to backup, if current file is newest
-	if modTimeFileBackup.Unix() > arcLastDate.Unix() {
-		timeToName := modTimeFileBackup.Format("02-01-2006_15.04.05")
-		nameWithoutExt := currTask.FileName[:len(currTask.FileName)-len(curExt)]
-		newFileName := nameWithoutExt + "_" + timeToName + curExt
-		log.Printf("Name without extention: %s", nameWithoutExt)
-		log.Printf("New Filename to backup file: %s", newFileName)
-		bytes, _ := ioutil.ReadFile(pathToBackup)
-		pathToNewBackupFile := path.Join(arcDir, newFileName)
-		log.Printf("Uploading backup file to WebDev path: %s", pathToNewBackupFile)
-		err := wdServer.Write(pathToNewBackupFile, bytes, 0644)
-		if err != nil {
-			return err
-		}
-		log.Printf("Copy successed")
 	}
 	return nil
 }
