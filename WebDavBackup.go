@@ -24,13 +24,14 @@ type Conf struct {
 }
 
 type ConfTask struct {
-	Host         string `yaml:"Host"`
-	User         string
-	Password     string
-	ArcDir       string `yaml:"arc_dir"`
-	TzCorrection string `yaml:"TZCorrection"`
-	LocDir       string `yaml:"loc_dir"`
-	FileName     string `yaml:"file_name"`
+	Host          string `yaml:"Host"`
+	User          string
+	Password      string
+	RetryAttempts int
+	ArcDir        string `yaml:"arc_dir"`
+	TzCorrection  string `yaml:"TZCorrection"`
+	LocDir        string `yaml:"loc_dir"`
+	FileName      string `yaml:"file_name"`
 }
 
 func (c ConfTask) String() string {
@@ -212,8 +213,15 @@ func main() {
 
 func GetArcLastDate(currTask ConfTask, wdServer *wd.Client) (time.Time, error) {
 	arcDir := currTask.ArcDir
+	var filesArch []os.FileInfo
+	var err error
 	//Get all in archive directory on WebDav
-	filesArch, err := wdServer.ReadDir(arcDir)
+	for i := 0; i < currTask.RetryAttempts; i++ {
+		filesArch, err = wdServer.ReadDir(arcDir)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -309,7 +317,12 @@ func uploadFileIfNeeded(currTask ConfTask, wdServer *wd.Client, modTimeLocalFile
 		bytes, _ := ioutil.ReadFile(pathToBackup)
 		pathToNewBackupFile := path.Join(arcDir, newFileName)
 		log.Infof("Uploading backup file to WebDev path: %s", pathToNewBackupFile)
-		err = wdServer.Write(pathToNewBackupFile, bytes, 0644)
+		for i := 0; i < currTask.RetryAttempts; i++ {
+			err = wdServer.Write(pathToNewBackupFile, bytes, 0644)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -348,8 +361,16 @@ func CreateNewFileName(currTask ConfTask, modTimeLocalFile time.Time) (string, e
 
 func CreateRemoteArcDirIfNotExists(currTask ConfTask, wdServer *wd.Client) error {
 	arcDir := currTask.ArcDir
-	//Get all files and directories on WebDav root
-	filesRoot, err := wdServer.ReadDir("/")
+	var filesRoot []os.FileInfo
+	var err error
+	//retry if got error
+	for i := 0; i < currTask.RetryAttempts; i++ {
+		//Get all files and directories on WebDav root
+		filesRoot, err = wdServer.ReadDir("/")
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -372,7 +393,12 @@ func CreateRemoteArcDirIfNotExists(currTask ConfTask, wdServer *wd.Client) error
 			arcUrl.Path = path.Join(arcUrl.Path, arcDir)
 			arcUrlStr := arcUrl.String()
 			log.Infof("Creating archive directory on path: %s", arcUrlStr)
-			err = wdServer.Mkdir(arcDir, 700)
+			for i := 0; i < currTask.RetryAttempts; i++ {
+				err = wdServer.Mkdir(arcDir, 700)
+				if err == nil {
+					break
+				}
+			}
 			if err != nil {
 				return err
 			}
