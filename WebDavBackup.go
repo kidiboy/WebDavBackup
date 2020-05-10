@@ -190,6 +190,9 @@ func main() {
 			if err != nil {
 				log.Errorf("(%s)\t%s", currTask.LocDir, err)
 			}
+			log.Infof("file: %s, modTimeLocalFile: %v (to cache: %v)", currTask.FileName,
+				modTimeLocalFile.Format("02-01-2006 15.04.05 -0700 MST"),
+				lastModTime.Format("02-01-2006 15.04.05 -0700 MST"))
 			if modTimeLocalFile.Unix() > lastModTime.Unix() {
 				err = doBackup(currTask, modTimeLocalFile)
 				if err != nil {
