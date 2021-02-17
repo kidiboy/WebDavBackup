@@ -227,6 +227,15 @@ func CheckConfig(conf *Conf) {
 
 func GetArcLastDate(currTask ConfTask, wdServer *wd.Client) (time.Time, error) {
 	arcDir := currTask.ArcDir
+	filesArch, err := ReadWDDirWithRetries(wdServer, currTask, arcDir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	backupFileName := currTask.FileName
+	return DoGetArcLastDate(backupFileName, filesArch)
+}
+
+func ReadWDDirWithRetries(wdServer *wd.Client, currTask ConfTask, arcDir string) ([]os.FileInfo, error) {
 	var filesArch []os.FileInfo
 	var err error
 	//Get all in archive directory on WebDav
@@ -236,11 +245,7 @@ func GetArcLastDate(currTask ConfTask, wdServer *wd.Client) (time.Time, error) {
 			break
 		}
 	}
-	if err != nil {
-		return time.Time{}, err
-	}
-	backupFileName := currTask.FileName
-	return DoGetArcLastDate(backupFileName, filesArch)
+	return filesArch, err
 }
 
 func DoGetArcLastDate(backupFileName string, filesArch []os.FileInfo) (time.Time, error) {
@@ -346,16 +351,7 @@ func uploadFileIfNeeded(currTask ConfTask, wdServer *wd.Client, modTimeLocalFile
 }
 
 func CreateNewFileName(currTask ConfTask, modTimeLocalFile time.Time) (string, error) {
-	var correctTzString string
-	tzConfStr := currTask.TzCorrection
-	re := regexp.MustCompile("[0-9]+")
-	digits := re.FindAllString(tzConfStr, -1)
-	if strings.HasPrefix(tzConfStr, "-") {
-		correctTzString = "-" + strings.Join(digits, "")
-	} else {
-		correctTzString = "+" + strings.Join(digits, "")
-	}
-	timeToTzOffset, err := time.Parse("-0700", correctTzString)
+	timeToTzOffset, err := time.Parse("-0700", ConvertTzCorrectionFormat(currTask.TzCorrection))
 	if err != nil {
 		return "", nil
 	}
@@ -368,55 +364,64 @@ func CreateNewFileName(currTask ConfTask, modTimeLocalFile time.Time) (string, e
 	timeToName := modTimeLocalFile.Format("02-01-2006_15.04.05-0700")
 	nameWithoutExt := currTask.FileName[:len(currTask.FileName)-len(curExt)]
 	newFileName := nameWithoutExt + "_" + timeToName + curExt
-	log.Infof("Name without extention: %s", nameWithoutExt)
-	log.Infof("New Filename to backup file: %s", newFileName)
+	log.Debugf("Name without extention: %s", nameWithoutExt)
+	log.Debugf("New Filename to backup file: %s", newFileName)
 	return newFileName, nil
+}
+
+// Our config uses timezone correction format like "-03:00".
+// We want to remove ":" from it and add "+" if it is missing
+func ConvertTzCorrectionFormat(tzConfStr string) string {
+	var correctTzString string
+	re := regexp.MustCompile("[0-9]+")
+	digits := re.FindAllString(tzConfStr, -1)
+	if strings.HasPrefix(tzConfStr, "-") {
+		correctTzString = "-" + strings.Join(digits, "")
+	} else {
+		correctTzString = "+" + strings.Join(digits, "")
+	}
+	return correctTzString
 }
 
 func CreateRemoteArcDirIfNotExists(currTask ConfTask, wdServer *wd.Client) error {
 	arcDir := currTask.ArcDir
-	var filesRoot []os.FileInfo
-	var err error
-	//retry if got error
-	for i := 0; i < currTask.RetryAttempts; i++ {
-		//Get all files and directories on WebDav root
-		filesRoot, err = wdServer.ReadDir("/")
-		if err == nil {
-			break
-		}
-	}
+	filesRoot, err := ReadWDDirWithRetries(wdServer, currTask, "/")
 	if err != nil {
 		return err
 	}
 	//Count item on WebDav root
-	cnt := len(filesRoot)
-	log.Debugf("Count item on WebDav root directory: %d", cnt)
+	log.Debugf("Count item on WebDav root directory: %d", len(filesRoot))
 	//Listing filesRoot and directories, find arch directory
-	for _, file := range filesRoot {
-		cnt -= 1
-		if (file.Name() == arcDir) && (file.IsDir() == true) {
-			log.Debugf("Archive directory \"%s\" found", arcDir)
-			break
-		} else if cnt == 0 {
-			log.Warningf("Archive directory \"%s\" NOT found", arcDir)
-			//Join root WebDav path and archive directory
-			arcUrl, err := url.Parse(currTask.Host)
-			if err != nil {
-				return err
+	if HasDirWithName(filesRoot, arcDir) {
+		log.Debugf("Archive directory \"%s\" found", arcDir)
+	} else {
+		log.Warningf("Archive directory \"%s\" NOT found", arcDir)
+		//Join root WebDav path and archive directory
+		arcUrl, err := url.Parse(currTask.Host)
+		if err != nil {
+			return err
+		}
+		arcUrl.Path = path.Join(arcUrl.Path, arcDir)
+		arcUrlStr := arcUrl.String()
+		log.Infof("Creating archive directory on path: %s", arcUrlStr)
+		for i := 0; i < currTask.RetryAttempts; i++ {
+			err = wdServer.Mkdir(arcDir, 700)
+			if err == nil {
+				break
 			}
-			arcUrl.Path = path.Join(arcUrl.Path, arcDir)
-			arcUrlStr := arcUrl.String()
-			log.Infof("Creating archive directory on path: %s", arcUrlStr)
-			for i := 0; i < currTask.RetryAttempts; i++ {
-				err = wdServer.Mkdir(arcDir, 700)
-				if err == nil {
-					break
-				}
-			}
-			if err != nil {
-				return err
-			}
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func HasDirWithName(files []os.FileInfo, name string) bool {
+	for _, file := range files {
+		if (file.Name() == name) && (file.IsDir() == true) {
+			return true
+		}
+	}
+	return false
 }
