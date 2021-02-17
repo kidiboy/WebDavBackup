@@ -27,7 +27,7 @@ type ConfTask struct {
 	Host          string `yaml:"Host"`
 	User          string
 	Password      string
-	RetryAttempts int
+	RetryAttempts int    `yaml:"retryAttempts"`
 	ArcDir        string `yaml:"arc_dir"`
 	TzCorrection  string `yaml:"TZCorrection"`
 	LocDir        string `yaml:"loc_dir"`
@@ -147,10 +147,9 @@ func main() {
 	//log.Error("err")
 	//log.Critical("crit")
 
-	//flag with run application
 	var confPath string
 
-	//parsing flag running
+	//parsing flag "--conf"
 	flag.StringVar(&confPath, "conf", "config.yml", "Path to config")
 	flag.Parse()
 	configLog.Infof("path to config: %s", confPath)
@@ -160,6 +159,9 @@ func main() {
 		configLog.Critical(err)
 		return
 	}
+
+	CheckConfig(conf)
+
 	durSleep := time.Duration(conf.Duration) * time.Minute
 
 	var logLvl logging.Level
@@ -175,6 +177,9 @@ func main() {
 		logLvl = logging.ERROR
 	default:
 		logLvl = logging.INFO
+		log.Warningf("the value of parameter \"logLvl\" in the configuration file is set incorrectly "+
+			"(\"%s\")", conf.LogLvl)
+		log.Warningf("the default value was applied. logLvl: %s", logLvl)
 	}
 
 	backend.SetLevel(logLvl, "")
@@ -209,6 +214,15 @@ func main() {
 		time.Sleep(durSleep)
 	}
 
+}
+
+func CheckConfig(conf *Conf) {
+	for _, task := range conf.TasksWD {
+		if task.RetryAttempts < 1 {
+			log.Panicf("the value of parameter \"retryAttempts\" from Task(%s) in the configuration file "+
+				"is set incorrectly (\"%v\"). THE APP IS STOPPED!", task.LocDir+task.FileName, task.RetryAttempts)
+		}
+	}
 }
 
 func GetArcLastDate(currTask ConfTask, wdServer *wd.Client) (time.Time, error) {
