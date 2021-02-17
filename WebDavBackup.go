@@ -43,14 +43,12 @@ func ReadConfig(path string) (*Conf, error) {
 	confFile, err := os.Open(path)
 	if err != nil {
 		configLog.Error(err)
-		//log.Printf("err ReadConfig\t%s", err)
 		return nil, err
 	}
 	//noinspection GoUnhandledErrorResult
 	defer confFile.Close()
 	if confFile != nil {
 		fileAll, _ := ioutil.ReadAll(confFile)
-		//log.Println(string(fileAll))
 		configLog.Info("################# READING CONFIGURATION #################")
 		//log.Println("################# READING CONFIGURATION #################")
 		currConf := Conf{}
@@ -58,13 +56,10 @@ func ReadConfig(path string) (*Conf, error) {
 		err := yaml.Unmarshal(fileAll, &currConf)
 		if err != nil {
 			configLog.Critical(err)
-			//log.Fatalf("error: %v", err)
 			return nil, err
 		}
 		configLog.Infof("Applyed config:\n%+v\n", currConf)
-		//log.Printf("Applyed config:\n%+v\n", currConf)
 		configLog.Info("#########################################################")
-		//log.Print("#########################################################")
 		return &currConf, nil
 	}
 	return nil, fmt.Errorf("file %s is empty", path)
@@ -75,11 +70,8 @@ func ParseArcDate(arcName string, confName string) (time.Time, error) {
 	layoutFull := "02-01-2006_15.04.05-0700"
 	extConfName := filepath.Ext(confName)
 	prefixConfName := confName[:len(confName)-len(extConfName)] + "_"
-	//log.Printf("extConfName: %s; prefixConfName: %s", extConfName, prefixConfName)
 	needLen := len(layout) + len(extConfName) + len(prefixConfName)
 	needLenFull := len(layoutFull) + len(extConfName) + len(prefixConfName)
-	//log.Printf("extConfName: %s; prefixConfName: %s; needLen: %d; needLenFull: %d; lenArcName: %d", extConfName,
-	//	prefixConfName,	needLen, needLenFull, len(arcName))
 	if (len(arcName) != needLen) && (len(arcName) != needLenFull) {
 		return time.Time{}, fmt.Errorf("the length of the file name \"%s\" differs from the required length",
 			arcName)
@@ -96,7 +88,6 @@ func ParseArcDate(arcName string, confName string) (time.Time, error) {
 			extConfName, arcName)
 	}
 	strArcDate := strings.TrimSuffix(arcNameWithoutPref, extConfName)
-	//log.Printf("Total date from file name arc file: %s", strArcDate)
 	if len(strArcDate) == len(layoutFull) {
 		parseDate, err := time.Parse(layoutFull, strArcDate)
 		if err != nil {
@@ -110,7 +101,6 @@ func ParseArcDate(arcName string, confName string) (time.Time, error) {
 		}
 		return parseDate, nil
 	}
-	//return time.Time{}, nil
 }
 
 var configLog = logging.MustGetLogger("forConfig")
@@ -138,14 +128,7 @@ func main() {
 	backend := logging.AddModuleLevel(
 		logging.NewBackendFormatter(
 			logging.NewLogBackend(os.Stdout, "", 0), format))
-	//backend.SetLevel(logging.INFO, "")
 	log.SetBackend(backend)
-
-	//log.Info("info")
-	//log.Notice("notice")
-	//log.Warning("warning")
-	//log.Error("err")
-	//log.Critical("crit")
 
 	var confPath string
 
@@ -255,20 +238,11 @@ func DoGetArcLastDate(backupFileName string, filesArch []os.FileInfo) (time.Time
 	for _, file := range filesArch {
 		//Only files with the required extension
 		if (filepath.Ext(file.Name()) == curExt) && (file.IsDir() == false) {
-			//log.Println(file)
-			//fileModeTime := file.ModTime()
 			fileParseModeTime, err := ParseArcDate(file.Name(), backupFileName)
 			if err != nil {
 				log.Warning(err)
 				continue
 			}
-			//log.Printf("Testing parse date from file name on archive:  parse date: %s, filename: %s",
-			//	fileParseModeTime, file.Name())
-			//Used filemode time from atribute
-			//if fileModeTime.Unix() > arcLastDate.Unix() {
-			//	arcLastDate = fileModeTime
-			//}
-			//log.Println(file.Name())
 
 			//Used get filemode from file name
 			if fileParseModeTime.Unix() > arcLastDate.Unix() {
@@ -283,13 +257,10 @@ func doBackup(currTask ConfTask, modTimeLocalFile time.Time) error {
 	pathToBackup := path.Join(currTask.LocDir, currTask.FileName)
 	log.Infof("Current path to backup file: %s; path to archive: %s",
 		pathToBackup, currTask.Host+currTask.ArcDir)
-	//log.Printf("inf doBackup\tCurrent path to backup file: %s; path to archive: %s",
-	//	pathToBackup, currTask.Host+currTask.ArcDir)
 
 	log.Debugf("Trying auth to WebDav server: %s, user: %s\n",
 		currTask.Host, currTask.User)
 	wdServer := wd.NewClient(currTask.Host, currTask.User, currTask.Password)
-	//arcDir := currTask.ArcDir
 
 	//Find Arc dir on WebDav, create it if not found
 	err := CreateRemoteArcDirIfNotExists(currTask, wdServer)
